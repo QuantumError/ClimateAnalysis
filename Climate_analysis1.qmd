@@ -1,0 +1,922 @@
+---
+title: "Jena Climate Analysis"
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 10
+jupyter: python3
+---
+
+# Overview
+In this overview, the focus is to answer three simple questions regarding the project: what, why and how.
+
+## What?
+This project uses the `jena_climate_2009_2016.csv` dataset. Link to the dataset can be found [here](https://www.kaggle.com/datasets/mnassrib/jena-climate)
+The dataset is one of the best and most popular climate datasets that can be found freely online, which makes it ideal for throughout data science analysis.
+
+The project runs in two main sections: The first one is the data analysis section, where the data is loaded, cleaned and visualized. The next section presents a statistical analysis with ML models of current trends and future predictions. 
+
+The goal of the project is to collect information about changes in temperature and relative humidity from the data and make future predictions.
+
+## Why?
+Climate data analysis and forecast is one of the classic topics in data science, which also why it is the topic of this project. Climate data, like the Jena climate dataset, are often nicely in time series format, which makes analysis quite straightforward. 
+
+Another important "why" in this project is to demonstrate the wast amount of methods and models which can be used to analyze and forecast time series data. 
+
+Forecasting is not only about predicting future trends, but analyzing current and ongoing trends and even relative extremes (such as hottest/coldest days) to get an idea of how realistic the forecasts are. 
+
+## How?
+
+There are few different ways to deal with time series forecasting. The simplest one would be to simply load the data into a time series format and run few simple forecast methods, like SARIMA. However, simply rushing into the forecast phase is usually ill-advised for large data, such as the Jena climate dataset. First of all, the data might be in non-clean format and there might also be other trends that should be analyzed first.
+
+That's why this project starts with a clear data analysis section, which produces important results for the next section. The statistics section is divided into three main parts, the SARIMA, PCA and RNN. SARIMA and RNN are used for time series forecast, whereas PCA gives a kind of "sanity check" about large trends in the dataset. 
+
+Finally the conclusions section should give insight into major findings from all the analyses and where they can lead to. The most useful methods and most important results will be analyzed, showing the major trends and paths to further applications.
+
+# Part 1: Data analysis and visualization
+Data-analytic methods do not give as precise results as statistical methods, but they give a good overview of the climate data and what trends are important for further analysis. This is why it's important to do data analysis, especially EDA, before any statistical modelling.
+
+Structure of the data analysis: 
+```{mermaid}
+flowchart LR
+A[Load] --> B[Clean]
+B --> C[Exploratory data analysis]
+C --> K[Temperature histogram]
+C --> L[Correlation matrix]
+C --> M[Descriptive statistics table]
+C --> N[Bivariate scatter plot]
+C --> D[Time series visualization]
+D --> E[Analysis of hottest day]
+D --> F[Analysis of coldest day]
+E --> G[Scatter plot]
+E --> H[Run chart]
+F --> I[Scatter plot]
+F --> J[Run chart]
+K --> O[Results]
+L --> O
+M --> O
+N --> O
+G --> O
+H --> O
+I --> O
+J --> O
+```
+```{python}
+from functools import reduce
+import random
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+
+
+try:
+    df = pd.read_csv('data/jena_climate_2009_2016.csv')
+except pandas.errors.EmptyDataError:
+    display('Empty path')
+
+df["Date Time"] = pd.to_datetime(
+    df["Date Time"],
+    format='%d.%m.%Y %H:%M:%S',
+    dayfirst=True,
+    errors="coerce"
+)
+
+#Set date times as index in dataframe
+df = df.dropna(subset=["Date Time"])
+df = df.set_index("Date Time")
+
+#Replace bad values
+df.columns = (
+    df.columns
+        .str.strip()
+        .str.replace(" ", "_")
+        .str.replace("(", "")
+        .str.replace(")", "")
+        .str.replace("%", "pct")
+        .str.replace("/", "_")
+        .str.replace("*", "")
+)
+
+df = df.apply(pd.to_numeric, errors="coerce") 
+df = df.sort_index()
+df = df.interpolate(method="time")
+
+```
+## EDA
+Exploratory data analysis is used to summarize the main characteristics of data, often visually. 
+Since size of the data is quite large most of the analyses will be restricted to smaller samples of the data, or resamples.
+First the head of the dataframe is printed to show the formatting:
+```{python}
+#| label: fig-eda-gen
+#| fig-cap: "Descriptive statistics table"
+df_weekly = df.resample("W").mean()
+
+display(df.head())
+
+display(f"Dimensions: {df.shape}")
+```
+Descriptive statistics gives an overview of the main properties of the variables/columns.  
+```{python}
+#| label: fig-desc
+#| fig-cap: "Descriptive statistics table"
+display(df.describe().T)
+```
+The univariate analysis shows the distribution of temperatures in a history plot 
+```{python}
+#| label: fig-hist
+#| fig-cap: "Univariate histogram"
+#Univariate Analysis
+sns.histplot(df['T_degC'], bins=5, kde=True, color='skyblue')
+plt.title("Univariate Analysis of Temperature")
+plt.show()
+```
+The correlation matrix shows mostly negative and near-zero correlation, which means a lack of linear relationships. This is to be expected from climate data.
+```{python}
+#| label: fig-corr
+#| fig-cap: "A correlation matrix"
+corr = df.corr(numeric_only=True)
+display("Correlation Matrix:", corr)
+```
+The bivariate analysis is done with monthly mean to give an overview of the relation between humidity and temperature, which is the main focus of this analysis. 
+```{python}
+#| label: fig-scat1
+#| fig-cap: "A scatter plot of temperature v humidity"
+df_monthly = df.resample("ME").mean()
+
+sns.scatterplot(data=df_monthly, x='T_degC',
+                y='rh_pct', color='orange', s=8)
+sns.regplot(data=df_monthly, x='T_degC',
+            y='rh_pct', scatter=False, color='blue')
+plt.title("Bivariate Analysis: Temperature vs Humidity")
+plt.xlabel("Temperature (°C) monthly mean")
+plt.ylabel("Humidity monthly mean")
+plt.show()
+```
+The next figure is a run chart of the time series. It's also resampled for weekly mean to give a more clear plot.
+```{python}
+#| label: fig-runchart1
+#| fig-cap: "A time series run chart of temperature and humidity"
+fig = go.Figure([go.Scatter(x=df_weekly.index, y=df_weekly['T_degC'], name='Temperature (°C)'),
+go.Scatter(x=df_weekly.index, y=df_weekly['rh_pct'], mode='lines', name='Humidity (%)')])
+fig.update_layout(
+    title='Temperature and Humidity Over Time',
+    xaxis_title='Time',
+    yaxis_title='Value'
+    )
+fig.show()
+```
+## Hottest day analysis
+The hottest day is analyzed next, giving important results about the specific climate changes during heat.
+```{python}
+df_daily =  df.resample("D").mean()
+hottest_day = df_daily['T_degC'].idxmax()
+display("Hottest recorded day: ", hottest_day.date().strftime('%Y-%m-%d'), "with mean temperature: ", df_daily['T_degC'].max())
+hottest_day_data = df.loc[hottest_day.date().strftime('%Y-%m-%d')]
+```
+The next figure is a scatter plot similar to @fig-scat1
+```{python}
+#| label: fig-scat2
+#| fig-cap: "A scatter plot of temperature v humidity during the hottest day"
+sns.scatterplot(data=hottest_day_data, x='T_degC',
+                    y='rh_pct', color='orange', s=8)
+sns.regplot(data=hottest_day_data, x='T_degC',
+            y='rh_pct', scatter=False, color='blue')
+plt.title("Bivariate Analysis: Temperature vs Humidity for the hottest day")
+plt.xlabel("Temperature (°C)")
+plt.ylabel("Humidity percentage")
+plt.show()
+```
+The next run chart shows the developments in humidity and temperature for the hottest day. 
+```{python}
+#| label: fig-runchart2
+#| fig-cap: "A time series run chart of temperature and humidity during the hottest day"
+fig = go.Figure([go.Scatter(x=hottest_day_data.index, y=hottest_day_data['T_degC'], mode='lines', name='Temperature (°C)'),
+go.Scatter(x=hottest_day_data.index, y=hottest_day_data['rh_pct'], mode='lines', name='Humidity (%)')])
+    
+fig.update_layout(
+title='Temperature and Humidity Over The Hottest Day',
+xaxis_title='Time',
+yaxis_title='Value'
+)
+fig.show()
+```
+
+## Coldest day analysis
+A similar analysis is performed for the coldest day in the dataset
+```{python}
+df_daily =  df.resample("D").mean()
+coldest_day = df_daily['T_degC'].idxmin()
+display("Coldest recorded day: ", coldest_day.date().strftime('%Y-%m-%d'), "with mean temperature: ", df_daily['T_degC'].min())
+coldest_day_data = df.loc[coldest_day.date().strftime('%Y-%m-%d')]
+```
+The next scatter plot shows the relation between humidity and temperature during the coldest day
+```{python}
+#| label: fig-scat3
+#| fig-cap: "A scatter plot of temperature v humidity during the coldest day"
+sns.scatterplot(data=coldest_day_data, x='T_degC',
+                    y='rh_pct', color='orange', s=8)
+sns.regplot(data=coldest_day_data, x='T_degC',
+            y='rh_pct', scatter=False, color='blue')
+plt.title("Bivariate Analysis: Temperature vs Humidity for the coldest day")
+plt.xlabel("Temperature (°C)")
+plt.ylabel("Humidity percentage")
+plt.show()
+```
+The next run chart is the final figure for the data analysis section.
+```{python}
+#| label: fig-runchart3
+#| fig-cap: "A time series run chart of temperature and humidity during the coldest day"
+fig = go.Figure([go.Scatter(x=coldest_day_data.index, y=coldest_day_data['T_degC'], mode='lines',name='Temperature (°C)'),
+go.Scatter(x=coldest_day_data.index, y=coldest_day_data['rh_pct'], mode='lines', name='Humidity (%)')])
+    
+fig.update_layout(
+title='Temperature and Humidity Over The Coldest Day',
+xaxis_title='Time',
+yaxis_title='Value'
+)
+fig.show()
+```
+## Results 
+There are few important trends that could be detected from the analysis so far. One is that the relationship between humidity and temperature is not clearly linear. The second is that humidity and temperatures vary much more during the hottest day than the coldest, which is shown from figures @fig-runchart2 and @fig-runchart3. 
+All of the scatter plots show slightly negative correlation between temperature and humidity, especially @fig-scat3 for the hottest day. Readings from the correlation matrix @fig-corr also show similar results. From @fig-desc, you should look at T_degC and rh_pct, especially their standard deviation which shows a trend very important to further analysis, which is that the low standard deviation indicates values being close to the mean. The @fig-hist also shows also a similar trend for temperature.
+
+
+# Part 2: Statistics
+
+There are few important models to be applied. First, linear model curve fit and polynomial overfit show general trends in data. These are important for the SARIMA forects, so you can approximate if the forecast is realistic. 
+After that, principal component analysis will show distribution of large trends in data, visualized with scatter plots. 
+Finally a RNN (recurrent neaural network) is trained on the data for a hypothesis about climate future trends.
+
+Structure of statistical analysis: 
+```{mermaid}
+flowchart LR
+A[PCA] --> B[Temperature analysis]
+B --> C[Curve fitting]
+C --> D[SARIMA]
+A --> E[Humidity analysis]
+E --> F[Curve fitting]
+F --> G[SARIMA]
+D --> J[Temperature RNN]
+G --> H[Humidity RNN]
+C --> I[Results]
+D --> I
+F --> I
+G --> I
+H --> I
+J --> I
+```
+
+## PCA
+First is the principal component analysis (PCA). PCA is really important for finding general trends in the data. Since the climate dataset is quite large, dimensional reduction methods like PCA are often performed first. 
+
+Unlike SARIMA or RNNs, PCA is not meant to predict trends. Informally you can imagine the PCA serving as a "general guideline" of the trends in the time series. It's also important to check seasonality effects from the PCA.
+```{python}
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import confusion_matrix
+from matplotlib.colors import ListedColormap
+
+
+X = df_weekly[['T_degC', 'rh_pct']].values[:-1]      # all except last row
+y = df_weekly[['T_degC', 'rh_pct']].values[1:,0]     # next time step (assuming first column is target)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+sc = StandardScaler()
+X_train = sc.fit_transform(X_train)
+X_test = sc.transform(X_test)
+
+pca = PCA(n_components=2)
+X_train = pca.fit_transform(X_train)
+X_test = pca.transform(X_test)
+```
+The mathematics behind PCA is quite simple, first the standardized scaler $x' = \frac{x - \mu}{\sigma}$, then covariance matrix for PCA $\Sigma = \frac{1}{n-1} X^\top X$, then eigendecomposition $\Sigma \mathbf{v}_i = \lambda_i \mathbf{v}_i$ and finally PCA $X_{\text{PCA}} = X W$. 
+
+The scatter plot shows the results from training.
+```{python}
+#| label: fig-pca
+#| fig-cap: "PCA plots"
+fig, ax = plt.subplots(1, 2, figsize=(12,5))
+
+scatter1 = ax[0].scatter(X_train[:,0], X_train[:,1], c=y_train, cmap='viridis')
+fig.colorbar(scatter1, ax=ax[0], label='Temperature (T_degC)')
+ax[0].set_xlabel('PC1')
+ax[0].set_ylabel('PC2')
+ax[0].set_title('PCA colored by temperature')
+
+scatter2 = ax[1].scatter(X_train[:,0], X_train[:,1], c=X_train[:,1], cmap='coolwarm')
+fig.colorbar(scatter2, ax=ax[1], label='Humidity (rh_pct)')
+ax[1].set_xlabel('PC1')
+ax[1].set_ylabel('PC2')
+ax[1].set_title('PCA colored by humidity')
+
+plt.show()
+
+```
+
+## Temperature analysis
+The statistical analyses are also done in two parts, first for temperature and then humidity.
+
+### Curve fitting
+Curve fitting an important first step in statistical analysis to show general trends in the time series. First a linear model $f(t,a,b)=a*t+b$ is fit, the a polynomial overfitting.
+```{python}
+#| label: fig-deg-lin
+#| fig-cap: "Linear model info"
+from scipy.optimize import curve_fit
+
+def linear_model(t, a, b):
+        return a * t + b
+
+y = df_weekly['T_degC'].values
+x = np.arange(len(y))
+
+params, covariance = curve_fit(linear_model, x, y)
+
+slope, intercept = params
+print(f"Slope: {slope:.4f} °C per week")
+print(f"Intercept: {intercept:.2f}")
+
+y_fitted = linear_model(x, slope, intercept)
+
+```
+The polynomial curve is a more "realistic" approximation.
+Given data $(x_1,y_1),(x_2,y_3),\ldots(x_n,y_n)$ we find a coefficients $c_0,c_1,\ldots,c_d$ for polynomial of degree $d$ (in this case $d=8$) such that the solution to
+$p(x)=c_0 x^d+c_1 x^{d-1} + \ldots + c_{d-1}x+c_d$ minimizes the squared error 
+$$
+E = \sum^k_{i=0}\|p(x_i)-y_i\|
+$$
+```{python}
+poly_degree = 8
+poly_coeffs = np.polyfit(x, y, poly_degree)
+y_poly_fit = np.polyval(poly_coeffs, x)
+```
+Plotting both the curve fits shows which is more accurate
+```{python}
+#| label: fig-deg-fit
+#| fig-cap: "Curve fitting for temperature"
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y,
+    mode='lines',
+    name='Observed Temperature'
+))
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y_fitted,
+    mode='lines',
+    name='Linear Curve (curve_fit)',
+    line=dict(color='green', dash='dot')
+))
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y_poly_fit,
+    mode='lines',
+    name='Polynomial Curve',
+    line=dict(color='red', dash='dot')
+))
+
+fig.update_layout(
+    title='Linear and Polynomial Curve Fit to Temperature',
+    xaxis_title='Date',
+    yaxis_title='Temperature (°C)',
+    hovermode='x unified'
+)
+
+fig.show()
+```
+### SARIMA
+Next is the SARIMA forecast, which give us a look at temperature trends and future predictions.
+Informally the SARIMA, which is a seasonalized version of ARIMA, is a model composed of few parts: AutoRegressive + Integrated + Moving Average. Each part does something different to help with future forecast; the AutoRegressive part constructs the next step from previous steps, Integrated part deals with unnecessary noise, Moving Average part helps with future data based on the current step. What the whole model does, is giving an approximate prediction of the future development of the time series.
+
+First it's important to check the ADF test, which is important for further analysis. The data is required to be stationary, since it should have mean and variance for SARIMA.
+Mathematically, for a time series $t_t$, the ADF is
+$$
+\Delta y_t = \alpha + \beta t + \gamma y_{t-1}
++ \sum_{i=1}^{p} \delta_i \Delta y_{t-i} + \varepsilon_t
+$$ 
+where $\Delta y_t = y_t - y_{t-1}$ is the difference. The test hypothesis is
+$$
+\begin{aligned}
+H_0 &: \gamma = 0 \quad \text{(unit root, non-stationary)} \\
+H_1 &: \gamma < 0 \quad \text{(stationary)}
+\end{aligned}
+$$
+```{python}
+#| label: fig-deg-adfuller
+#| fig-cap: "Augmented Dickey-Fuller test for SARIMA"
+from statsmodels.tsa.statespace.sarimax import SARIMAX 
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+def check_stationarity(timeseries):
+    result = adfuller(timeseries, autolag='AIC')
+    p_value = result[1]
+    print(f'ADF Statistic: {result[0]}')
+    print(f'p-value: {p_value}')
+    print('Stationary' if p_value < 0.05 else 'Non-Stationary')
+
+
+check_stationarity(df_weekly['T_degC'])
+```
+
+Mathematically the SARIMA model is the equation:
+$$
+(1 - B)^d (1 - B^s)^D \Phi(B^s)\phi(B) y_t
+=
+c + \beta^\top x_t + \Theta(B^s)\theta(B)\varepsilon_t
+$$
+where
+- $y_t$ : Observed value of the time series at time $t$.
+
+- $B$ : Backshift (lag) operator, $B^k y_t = y_{t-k}$. Represents past observations compactly.
+
+- $(1 - B)^d$ : Non-seasonal differencing of order $d$. Removes non-stationary trends.
+  
+  $$
+  d = 1 \Rightarrow (1-B)y_t = y_t - y_{t-1}, \quad
+  d = 2 \Rightarrow (1-B)^2 y_t = y_t - 2y_{t-1} + y_{t-2}
+  $$
+
+- $(1 - B^s)^D$ : Seasonal differencing of order $D$ with period $s$. Removes seasonal trends.
+  
+  $$
+  D=1 \Rightarrow (1-B^s)y_t = y_t - y_{t-s}
+  $$
+
+- $\phi(B) = 1 - \phi_1 B - \phi_2 B^2 - \dots - \phi_p B^p$ : Non-seasonal AR (autoregressive) polynomial of order $p$. Models dependence on past $p$ observations.
+
+- $\Phi(B^s) = 1 - \Phi_1 B^s - \Phi_2 B^{2s} - \dots - \Phi_P B^{Ps}$ : Seasonal AR polynomial of order $P$. Models dependence on previous seasons.
+
+- $c$ : Constant or intercept. In `statsmodels`, applied before differencing; with $d>0$ or $D>0$ it behaves like a drift term.
+
+- $x_t$ : Vector of exogenous regressors (external variables) at time $t$, e.g., weather, holidays.
+
+- $\beta$ : Coefficient vector corresponding to $x_t$. Measures the effect of exogenous variables.
+
+- $\theta(B) = 1 + \theta_1 B + \theta_2 B^2 + \dots + \theta_q B^q$ : Non-seasonal MA (moving average) polynomial of order $q$. Captures influence of past shocks on current value.
+
+- $\Theta(B^s) = 1 + \Theta_1 B^s + \Theta_2 B^{2s} + \dots + \Theta_Q B^{Qs}$ : Seasonal MA polynomial of order $Q$. Captures influence of past seasonal shocks.
+
+- $\varepsilon_t \sim \mathcal{N}(0, \sigma^2)$ : Innovations or white noise. Random shocks driving the stochastic component of the series.
+
+Autocorrelation and Partial Autocorrelation plots help with choosing the SARIMA model parameters, which are default and seen in most time series data like this.
+
+```{python}
+#| label: fig-deg-acf
+#| fig-cap: "ACF plots"
+plot_acf(df_weekly['T_degC'])
+plot_pacf(df_weekly['T_degC'])
+plt.show()
+
+p, d, q = 1, 1, 1
+P, D, Q, s = 1, 1, 1, 52
+model = SARIMAX(df_weekly['T_degC'], order=(p, d, q), seasonal_order=(P, D, Q, s))
+results = model.fit()
+```
+Finally the SARIMA model predictions and visualizations are made. 
+```{python}
+#| label: fig-deg-sarima
+#| fig-cap: "SARIMA plots"
+forecast_periods = 40 #days
+forecast_obj = results.get_forecast(steps=forecast_periods)
+forecast = forecast_obj.predicted_mean
+forecast_ci = forecast_obj.conf_int()
+
+# Create a datetime index for the forecast
+forecast_index = pd.date_range(start=df_weekly.index[-1], periods=forecast_periods+1, freq='W')[1:]
+
+
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=df_weekly['T_degC'],
+    mode='lines',
+    name='Observed Temperature'
+))
+
+
+fig.add_trace(go.Scatter(
+    x=forecast_index,
+    y=forecast,
+    mode='lines',
+    name='Forecast Temperature',
+    line=dict(color='red', dash='dash')
+))
+
+fig.add_trace(go.Scatter(
+    x=forecast_index,
+    y=forecast_ci.iloc[:, 0],
+    mode='lines',
+    name='Confidence Interval',
+    line=dict(color='rgba(161, 27, 128, 0.2)')
+))
+
+
+fig.update_layout(
+    title='Temperature Forecast',
+    xaxis_title='Date',
+    yaxis_title='Temperature (°C)',
+    hovermode='x unified'
+)
+
+fig.show()
+```
+The next figures show diagnostics from the SARIMA model. These are important for further analysis.
+```{python}
+#| label: fig-deg-diagnostic
+#| fig-cap: "SARIMA diagnostics"
+results.plot_diagnostics(figsize=(15, 10))
+plt.show()
+```
+
+## Humidity analysis
+The humidity analysis goes through both the curve fitting and SARIMA, similar to temperature. 
+
+### Curve fitting
+Curve fitting an important first step in statistical analysis to show general trends in the time series. 
+```{python}
+#| label: fig-hum-lin
+#| fig-cap: "Linear model info"
+def linear_model(t, a, b):
+        return a * t + b
+
+y = df_weekly['rh_pct'].values
+x = np.arange(len(y))
+
+params, covariance = curve_fit(linear_model, x, y)
+
+slope, intercept = params
+print(f"Slope: {slope:.4f} Humidity % per week")
+print(f"Intercept: {intercept:.2f}")
+
+y_fitted = linear_model(x, slope, intercept)
+
+```
+The polynomial curve is a more "realistic" approximation.
+```{python}
+#Fit a polynomial
+poly_degree = 8
+poly_coeffs = np.polyfit(x, y, poly_degree)
+y_poly_fit = np.polyval(poly_coeffs, x)
+```
+Plotting both the curve fits shows which is more accurate
+```{python}
+#| label: fig-hum-fit
+#| fig-cap: "Curve fitting for temperature"
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y,
+    mode='lines',
+    name='Observed Temperature'
+))
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y_fitted,
+    mode='lines',
+    name='Linear Curve (curve_fit)',
+    line=dict(color='green', dash='dot')
+))
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=y_poly_fit,
+    mode='lines',
+    name='Polynomial Curve',
+    line=dict(color='red', dash='dot')
+))
+
+fig.update_layout(
+    title='Linear and Polynomial Curve Fit to Humidity',
+    xaxis_title='Date',
+    yaxis_title='Humidity %',
+    hovermode='x unified'
+)
+
+fig.show()
+```
+### SARIMA
+The SARIMA models is trained an visualized for relative humidity
+```{python}
+#| label: fig-hum-adfuller
+#| fig-cap: "Augmented Dickey-Fuller test for SARIMA"
+def check_stationarity(timeseries):
+    result = adfuller(timeseries, autolag='AIC')
+    p_value = result[1]
+    print(f'ADF Statistic: {result[0]}')
+    print(f'p-value: {p_value}')
+    print('Stationary' if p_value < 0.05 else 'Non-Stationary')
+
+
+check_stationarity(df_weekly['rh_pct'])
+```
+Autocorrelation and Partial Autocorrelation plots help with choosing the SARIMA model parameters, which are default and seen in most time series data like this
+```{python}
+#| label: fig-hum-acf
+#| fig-cap: "ACF plots"
+plot_acf(df_weekly['rh_pct'])
+plot_pacf(df_weekly['rh_pct'])
+plt.show()
+
+p, d, q = 1, 1, 1
+P, D, Q, s = 1, 1, 1, 52
+model = SARIMAX(df_weekly['rh_pct'], order=(p, d, q), seasonal_order=(P, D, Q, s))
+results = model.fit()
+```
+ Predictions and their visualizations.
+```{python}
+#| label: fig-hum-sarima
+#| fig-cap: "SARIMA plots"
+forecast_periods = 40 #days
+forecast_obj = results.get_forecast(steps=forecast_periods)
+forecast = forecast_obj.predicted_mean
+forecast_ci = forecast_obj.conf_int()
+
+# Create a datetime index for the forecast
+forecast_index = pd.date_range(start=df_weekly.index[-1], periods=forecast_periods+1, freq='W')[1:]
+
+
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=df_weekly.index,
+    y=df_weekly['rh_pct'],
+    mode='lines',
+    name='Observed Humidity'
+))
+
+fig.add_trace(go.Scatter(
+    x=forecast_index,
+    y=forecast,
+    mode='lines',
+    name='Forecast Humidity',
+    line=dict(color='red', dash='dash')
+))
+
+fig.add_trace(go.Scatter(
+    x=forecast_index,
+    y=forecast_ci.iloc[:, 0],
+    mode='lines',
+    name='Confidence Interval',
+    line=dict(color='rgba(161, 27, 128, 0.2)')
+))
+
+
+fig.update_layout(
+    title='Humidity Forecast',
+    xaxis_title='Date',
+    yaxis_title='Humidity %',
+    hovermode='x unified'
+)
+
+fig.show()
+```
+The next figures show diagnostics from the SARIMA model. These are important for further analysis.
+```{python}
+#| label: fig-hum-diagnostic
+#| fig-cap: "SARIMA diagnostics"
+results.plot_diagnostics(figsize=(15, 10))
+plt.show()
+```
+
+## RNN model
+The RNN model is highly a highly useful neural network for several reasons. 1: Due to it's time-dependent architecture, it's a natural fit for time series analysis, 2: it's one of the most well developed "simple" neural networks and thus has natural support from Python libraries. Informally the RNN model predicts future trends from past events by recognizing individual patterns per timestep.
+The math behind the RNN is surprisingly simple.
+First the min-max scaling: $x' = \frac{x - x_{\min}}{x_{\max} - x_{\min}}$, which helps with RNN converging faster to normalized data.
+Then create_dataset is used to guide the RNN to predict from past 60 time steps as $X_i = [x_i, x_{i+1}, \dots, x_{i+\text{time\_step}-1}]$.
+The simpleRNN creation follows $h_t = \tanh(W_x x_t + W_h h_{t-1} + b)$ where $x_t$ input at timestep $t$, $h_{t-1}$ hidden state from previous timestep, $W_x,W_h$ weight matrices and $b$ bias vector. 
+
+### Temperature
+```{python}
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, SimpleRNN
+
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(df_weekly[['T_degC']])
+
+def create_dataset(data, time_step=60):
+    X, y = [], []
+    for i in range(len(data) - time_step - 1):
+        X.append(data[i:(i + time_step), 0])
+        y.append(data[i + time_step, 0])
+    return np.array(X), np.array(y)
+
+X, y = create_dataset(scaled_data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+
+X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+
+model = Sequential()
+model.add(SimpleRNN(units=50, return_sequences=True))
+model.add(SimpleRNN(units=50, return_sequences=False))
+model.add(Dense(units=1))
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+#Train model
+model.fit(X_train, y_train, epochs=20, batch_size=64,verbose=0)
+
+predictions = model.predict(X_test)
+predictions = scaler.inverse_transform(predictions)
+```
+Next print the MSE stats from learning. Informally these describe how close the predictions are to actual values.
+Mathematically, Mean Squared Error is $\text{MSE} = \frac{1}{n} \sum_{i=1}^{n} (\hat{y}_i - y_i)^2$,
+Root Mean Squared Error $\text{RMSE} = \sqrt{\text{MSE}} = \sqrt{\frac{1}{n} \sum_{i=1}^{n} (\hat{y}_i - y_i)^2}$
+and Mean Absolute Error is $\text{MAE} = \frac{1}{n} \sum_{i=1}^{n} \big| \hat{y}_i - y_i \big|$
+```{python}
+#| label: fig-deg-rnn-mse
+#| fig-cap: "RNN statistics"
+y_test_unscaled = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+mse = mean_squared_error(y_test_unscaled, predictions)
+rmse = np.sqrt(mse)
+mae = mean_absolute_error(y_test_unscaled, predictions)
+
+print(f"Unscaled Mean Squared Error (MSE): {mse}")
+print(f"Unscaled Root Mean Squared Error (RMSE): {rmse}")
+print(f"Unscaled Mean Absolute Error (MAE): {mae}")
+```
+Then plot results. These results show the time series development vs. predicted.
+```{python}
+#| label: fig-deg-rnn
+#| fig-cap: "RNN plots"
+
+time_index = df_weekly.index[-len(y_test_unscaled):]
+
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=time_index,
+    y=y_test_unscaled.flatten(),
+    mode='lines',
+    name='Real Temperature',
+    line=dict(color='blue')
+))
+
+
+fig.add_trace(go.Scatter(
+    x=time_index,
+    y=predictions.flatten(),
+    mode='lines',
+    name='Predicted Temperature',
+    line=dict(color='red')
+))
+
+
+fig.update_layout(
+    title='Temperature Prediction',
+    xaxis_title='Time',
+    yaxis_title='Temperature',
+    template='plotly_white'
+)
+
+
+fig.show()
+```
+
+### Relative Humidity
+Similar predictions also made for relative humidity
+```{python}
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_data = scaler.fit_transform(df_weekly[['rh_pct']])
+
+def create_dataset(data, time_step=60):
+    X, y = [], []
+    for i in range(len(data) - time_step - 1):
+        X.append(data[i:(i + time_step), 0])
+        y.append(data[i + time_step, 0])
+    return np.array(X), np.array(y)
+
+X, y = create_dataset(scaled_data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+
+X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+
+model = Sequential()
+model.add(SimpleRNN(units=50, return_sequences=True)) 
+model.add(SimpleRNN(units=50, return_sequences=False))
+model.add(Dense(units=1))
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+
+model.fit(X_train, y_train, epochs=20, batch_size=64, verbose=0)
+
+predictions = model.predict(X_test)
+predictions = scaler.inverse_transform(predictions)
+```
+Square errors from RNN
+```{python}
+#| label: fig-hum-rnn-mse
+#| fig-cap: "RNN statistics"
+y_test_unscaled = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+mse = mean_squared_error(y_test_unscaled, predictions)
+rmse = np.sqrt(mse)
+mae = mean_absolute_error(y_test_unscaled, predictions)
+
+print(f"Unscaled Mean Squared Error (MSE): {mse}")
+print(f"Unscaled Root Mean Squared Error (RMSE): {rmse}")
+print(f"Unscaled Mean Absolute Error (MAE): {mae}")
+```
+Then plot results
+```{python}
+#| label: fig-hum-rnn
+#| fig-cap: "RNN plots"
+
+fig = go.Figure()
+
+
+fig.add_trace(go.Scatter(
+    x=time_index,
+    y=y_test_unscaled.flatten(),
+    mode='lines',
+    name='Real Humidity',
+    line=dict(color='blue')
+))
+
+
+fig.add_trace(go.Scatter(
+    x=time_index,
+    y=predictions.flatten(),
+    mode='lines',
+    name='Predicted Humidity',
+    line=dict(color='red')
+))
+
+
+fig.update_layout(
+    title='Humidity Prediction',
+    xaxis_title='Time',
+    yaxis_title='Humidity',
+    template='plotly_white'
+)
+
+
+fig.show()
+```
+
+## Results
+From the statistical and ML analyses, few important qualities and trends show up. 
+
+First, PCA. From the principal component analysis, it's easy to find clear trends in the data. This shown in @fig-pca, where the data is visibly clustered. It's important that PCA behaves this way, because without strong seperation into groups, we wouldn't have seasonal differences in variance. Seasonalization is extremely important when it comes to the next phase of the analysis, .
+
+Next, the curve fit to the time series on temperature @fig-deg-fit shows that both the linear curve_fit and the numpy polynomial show the right trends. It's important to specify that the curve_fit and the numpy polynomial are different types, curve_fit is a local optimization algorithm and numpy polynomial is just a polynomial along the time series. Similarly @fig-hum-fit shows both the linear curve fit and the polynomial. Note how the polynomials almost "mirror" each other, which strengthens the claim that the temperature and humidity have a non-linear correspondence.
+
+The SARIMA models show interesting predictions. Both @fig-deg-sarima and @fig-hum-sarima show how the SARIMA model predicts future trends for the next 40 days. It's important to note that the SARIMA model is not perfect forecast, but a statistical approximation. This is why the @fig-deg-sarima might seem more "simplified" than @fig-hum-sarima. The SARIMA models are often used in time series weather forecast for the reason of their simplicity of results. Having a clear continuation of the time series is both visually and conceptually clear, and gives an approximation of future trends. It's important to note that it's only an approximation based on the recorded time series and should not be treated as a fully reliable forecast. Notice also from the the @fig-deg-diagnostic and @fig-hum-diagnostic normal Q-Q plots, you can see that the data is normally distributed, which should be expected from the climate SARIMA.
+
+Finally the RNN is trained for temperature and humidity. Before results are visualized, it's important the check the error metrics, which show how close the predictions are to actual data. From @fig-deg-rnn-mse the errors are in range. We can check this with a rough estimation from the coldest and hottest days (-16 to 29, which would be 45 as a range) so relative errors RMSE $\frac{3.27}{45}\approx 0.073$ so 7.3% of range and MAE $\frac{2.58}{45}\approx 0.057$ so 5.7% of range. These are low errors, signifying effective performance. From @fig-deg-rnn you can see how close the predictions are visually.
+
+Similarly @fig-hum-rnn-mse shows the error metrics. First print the most humid day relative humidity:
+```{python}
+humid_day = df_daily['rh_pct'].max()
+display(humid_day)
+```
+and least humid:
+```{python}
+humid_day = df_daily['rh_pct'].min()
+display(humid_day)
+```
+So the range is $100-37.59=62.41$. RMSE $\frac{6.18}{62.41}\approx 0.099$ so 9.9% of range and MAE $\frac{4.81}{62.41}\approx 0.077$ so 7.7% of range. This means that the humidity RNN is also well-performing.
+
+If we compare the SARIMA and RNN models, it's important to note their differences. SARIMA is a statistical model, whereas RNN is a neural network. They perform with completely different capacities and architectures. In classical climate and weather forecast predictions, (S)ARIMA is often preferred since it's part of time series analysis. However if you compare @fig-deg-sarima and @fig-deg-rnn, you can see how much closer RNN predictions are. It's also important to note that the RNN does not perform future forecast in this project, only predictions of the time series trends in its timeline.
+
+# Conclusions
+
+This project and it's analyses have been able to gather interesting properties from the `jena_climate_2009_2016.csv` dataset. First, the project structure is a merge of data analysis and data science methods, showing how data analysis, especially EDA, can help to produce results which make data science and even ML training more coherent. Particular connections between the data analysis and data science parts are the descriptive statistics tables @fig-desc and the hottest/coldest day analyses. Another important point is the @fig-runchart1 which is the starting point for further statistical analysis like @fig-deg-sarima and @fig-hum-sarima.
+
+The time series run charts can be seen as the main visualization points of the analysis, since they provide the most concise way to interprent time series. While the data is in time series format, the project is not only a time series analysis. Scatter plots, like @fig-scat1 and the PCA plots @fig-pca show general trends like negative correlation (which you can check from @fig-corr). 
+
+## Applications and future directions
+
+This project and its results can be theoretically applied to climate and weather analysis. The structure of `data cleaning -> data analysis -> time series visualization -> PCA trends -> forecast` is very effective and has produced desired results, especially in trying to find the general trends and most accurate forecast methods. The analysis of both the hottest and coldest days can be seen as somewhat analogous to maximum and minimum analysis with box-plot method, but more detailed. 
+
+The methodology used here, especially the SARIMA and RNN models, are essential for advanced time series forecasting. Climate data, such as the Jena climate dataset, is just one example of where this type of analysis could be useful. Other applications could include the stock market, medicine, etc.. 
+
+For future directions after this analysis, there are many possible ways to proceed. The most obvious would be to further specify the forecast, for example continue to make SARIMA forecast with predictions from RNN. Results from the forecast and general trends could be used to analyze rapid developments in climate. Also since this analysis only focuses on two variables, temperature and relative humidity, further analysis should also take in account other variables for a in-depth and reliable forecast. 
