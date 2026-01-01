@@ -1,3 +1,5 @@
+The project is made using Quarto (see https://quarto.org/)
+
 This project uses the Jena climate dataset from Kaggle:
 https://www.kaggle.com/datasets/mnassrib/jena-climate
 
